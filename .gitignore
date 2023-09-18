@@ -299,3 +299,6 @@ $RECYCLE.BIN/
 *.lnk
 
 # End of https://www.toptal.com/developers/gitignore/api/venv,python,macos,windows,vim,sublimetext
+
+# Project-specific files to ignore
+fragments
