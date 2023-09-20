@@ -1,4 +1,5 @@
 from pathlib import Path
+import pickle
 import sys
 
 import numpy as np
@@ -9,12 +10,18 @@ from tqdm import tqdm
 def main(query):
     tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
 
-    tokenized_corpus = [
-        tokenizer.tokenize(doc.open().read())
-        for doc in tqdm(sorted(
-            Path('fragments').glob('*.txt')
-        ), desc='Reading documents')
-    ]
+    save_file = Path('tokenized_corpus.pickle')
+    if save_file.exists():
+        print('Loading tokenized documents...')
+        tokenized_corpus = pickle.load(save_file.open('rb'))
+    else:
+        tokenized_corpus = [
+            tokenizer.tokenize(doc.open().read())
+            for doc in tqdm(sorted(
+                Path('fragments').glob('*.txt')
+            ), desc='Tokenizing documents')
+        ]
+        pickle.dump(tokenized_corpus, save_file.open('wb'))
     tokenized_query = tokenizer.tokenize(query)
     bm25 = BM25Okapi(tokenized_corpus)
 
