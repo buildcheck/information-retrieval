@@ -33,6 +33,13 @@ def get_tokenized_corpus(tokenizer):
         pickle.dump(tokenized_corpus, save_file.open('wb'))
     return tokenized_corpus
 
+def get_results(tokenizer, scores, tokenized_corpus, top_N):
+    return [
+        f'Score: {scores[i]:.4f}\n'
+        + tokenizer.decode(tokenizer.convert_tokens_to_ids(tokenized_corpus[i]))
+        for i in np.argsort(scores)[: -top_N - 1: -1]
+    ]
+
 def main(query):
     tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
     tokenized_corpus = get_tokenized_corpus(tokenizer)
@@ -44,11 +51,9 @@ def main(query):
         partial(bm25.get_scores, tokenized_query)
     )
     top_N = 5
-    results = [
-        f'Score: {scores[i]:.4f}\n'
-        + tokenizer.decode(tokenizer.convert_tokens_to_ids(tokenized_corpus[i]))
-        for i in np.argsort(scores)[: -top_N - 1: -1]
-    ]
+    results = timefunc('Decoding results... ', partial(
+        get_results, tokenizer, scores, tokenized_corpus, top_N
+    ))
     divider = '\n' + '=' * 40 + '\n'
     print(f'\nTop {top_N} results:')
     print(divider + divider.join(results))
