@@ -6,7 +6,7 @@ import sys
 
 import numpy as np
 from rank_bm25 import BM25Okapi
-from transformers import BertTokenizer
+from transformers import AutoTokenizer
 from tqdm import tqdm
 
 def timefunc(msg, func):
@@ -41,7 +41,7 @@ def get_results(tokenizer, scores, tokenized_corpus, top_N):
     ]
 
 def main(query):
-    tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+    tokenizer = AutoTokenizer.from_pretrained('colbert-ir/colbertv2.0')
     tokenized_corpus = get_tokenized_corpus(tokenizer)
 
     tokenized_query = tokenizer.tokenize(query)
@@ -50,12 +50,12 @@ def main(query):
         'Scoring query against corpus... ',
         partial(bm25.get_scores, tokenized_query)
     )
-    top_N = 5
+    top_N = 50
     results = timefunc('Decoding results... ', partial(
         get_results, tokenizer, scores, tokenized_corpus, top_N
     ))
     divider = '\n' + '=' * 40 + '\n'
-    print(f'\nTop {top_N} results:')
+    print(f'\nBM25 Top {top_N} results:')
     print(divider + divider.join(results))
     print()
 
