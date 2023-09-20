@@ -1,11 +1,12 @@
 from pathlib import Path
+import sys
 
 import numpy as np
 from rank_bm25 import BM25Okapi
 from transformers import BertTokenizer
 from tqdm import tqdm
 
-def main():
+def main(query):
     tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
 
     tokenized_corpus = [
@@ -14,7 +15,7 @@ def main():
             Path('fragments').glob('*.txt')
         ), desc='Reading documents')
     ]
-    tokenized_query = tokenizer.tokenize('Where should the ramps be put for wheelchair?')
+    tokenized_query = tokenizer.tokenize(query)
     bm25 = BM25Okapi(tokenized_corpus)
 
     top_N = 5
@@ -30,4 +31,7 @@ def main():
     print()
 
 if __name__ == '__main__':
-    main()
+    if len(sys.argv) < 2:
+        print(f"Usage: python3 {__file__} 'Message Here'", file=sys.stderr)
+        sys.exit(1)
+    main(sys.argv[1])
