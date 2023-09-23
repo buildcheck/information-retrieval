@@ -4,6 +4,7 @@ from pathlib import Path
 import pickle
 import os
 import time
+import subprocess
 import sys
 
 import numpy as np
@@ -11,6 +12,8 @@ import pandas as pd
 from rank_bm25 import BM25Okapi
 from transformers import AutoTokenizer
 from tqdm import tqdm
+
+DATA_DIR = Path('fragments')
 
 def timefunc(msg, func):
     print(msg, end='')
@@ -30,7 +33,7 @@ def get_tokenized_corpus(tokenizer):
         tokenized_corpus = [
             tokenizer.tokenize(doc.open().read())
             for doc in tqdm(sorted(
-                Path('fragments').glob('*.txt')
+                DATA_DIR.glob('*.txt')
             ), desc='Tokenizing documents')
         ]
         pickle.dump(tokenized_corpus, save_file.open('wb'))
@@ -69,7 +72,7 @@ def main(query):
     else:
         untokenized_corpus = sorted(
             f'Source file: {p.name}\n' + (d := p.open().read())[d.index('\n') + 1:]
-            for p in Path('fragments').glob('*.txt')
+            for p in DATA_DIR.glob('*.txt')
         )
         top_docs = [[untokenized_corpus[i] for i in r] for r in top_idx]
         top_scores = scores[np.arange(scores.shape[0])[:, None], top_idx]
@@ -86,9 +89,22 @@ def main(query):
         # Concatenate along the columns axis
         df_interleaved = pd.concat(columns, axis=1)
 
-        # Append to the original DataFrame and save
+        data_hash = timefunc('Hashing data directory... ', partial(
+            subprocess.run,
+            f'tar cf - {DATA_DIR.name} | git hash-object --stdin',
+            stdout=subprocess.PIPE, shell=True, text=True
+        )).stdout.strip()
+        commit_hash = timefunc('Getting code hash... ', partial(
+            subprocess.run,
+            'git rev-parse HEAD',
+            stdout=subprocess.PIPE, shell=True, text=True
+        )).stdout.strip()
+
         print('Outputting to csv...')
-        pd.concat([qcsv, df_interleaved], axis=1).to_csv('answers.csv', index=False)
+        outfile = Path('ir-answers.csv').open('w')
+        outfile.write(f'Data version: {data_hash},Code version: {commit_hash}\n')
+        pd.concat([qcsv, df_interleaved], axis=1).to_csv(outfile, index=False)
+        print('Success!')
 
 if __name__ == '__main__':
     # Avoids potential deadlocks
