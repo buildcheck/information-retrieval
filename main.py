@@ -1,10 +1,13 @@
+import csv
 from functools import partial
 from pathlib import Path
 import pickle
+import os
 import time
 import sys
 
 import numpy as np
+import pandas as pd
 from rank_bm25 import BM25Okapi
 from transformers import AutoTokenizer
 from tqdm import tqdm
@@ -33,34 +36,64 @@ def get_tokenized_corpus(tokenizer):
         pickle.dump(tokenized_corpus, save_file.open('wb'))
     return tokenized_corpus
 
-def get_results(tokenizer, scores, tokenized_corpus, top_N):
-    return [
-        f'Score: {scores[i]:.4f}\n'
-        + tokenizer.decode(tokenizer.convert_tokens_to_ids(tokenized_corpus[i]))
-        for i in np.argsort(scores)[: -top_N - 1: -1]
-    ]
-
 def main(query):
     tokenizer = AutoTokenizer.from_pretrained('colbert-ir/colbertv2.0')
     tokenized_corpus = get_tokenized_corpus(tokenizer)
+    bm25 = timefunc('Initializing BM25... ', partial(BM25Okapi, tokenized_corpus))
 
-    tokenized_query = tokenizer.tokenize(query)
-    bm25 = BM25Okapi(tokenized_corpus)
-    scores = timefunc(
-        'Scoring query against corpus... ',
+    if query:
+        tokenized_queries = [tokenizer.tokenize(query)]
+    else:
+        # Since the user did not provide a query, we instead read queries from CSV
+        qcsv = pd.read_csv('questions.csv')
+        tokenized_queries = [tokenizer.tokenize(q) for q in qcsv['Question Content']]
+
+    scores = np.array([timefunc(
+        f'Scoring query {i} against corpus... ',
         partial(bm25.get_scores, tokenized_query)
-    )
+    ) for i, tokenized_query in enumerate(tokenized_queries)])
+
     top_N = 50
-    results = timefunc('Decoding results... ', partial(
-        get_results, tokenizer, scores, tokenized_corpus, top_N
-    ))
-    divider = '\n' + '=' * 40 + '\n'
-    print(f'\nBM25 Top {top_N} results:')
-    print(divider + divider.join(results))
-    print()
+    top_idx = np.argsort(scores)[:, : -top_N - 1: -1]
+
+    if query:
+        results = [
+            f'Score: {scores[0][i]:.4f}\n'
+            + tokenizer.decode(tokenizer.convert_tokens_to_ids(tokenized_corpus[i]))
+            for i in top_idx[0]
+        ]
+        divider = '\n' + '=' * 40 + '\n'
+        print(f'\nBM25 Top {top_N} results:')
+        print(divider + divider.join(results))
+        print()
+    else:
+        untokenized_corpus = sorted(
+            f'Source file: {p.name}\n' + (d := p.open().read())[d.index('\n') + 1:]
+            for p in Path('fragments').glob('*.txt')
+        )
+        top_docs = [[untokenized_corpus[i] for i in r] for r in top_idx]
+        top_scores = scores[np.arange(scores.shape[0])[:, None], top_idx]
+        df_docs = pd.DataFrame(top_docs, columns=[f"Doc {i}" for i in range(1, top_scores.shape[1] + 1)])
+        df_scores = pd.DataFrame(top_scores, columns=[f"BM25 Score {i}" for i in range(1, top_scores.shape[1] + 1)])
+
+        # Interleave the two DataFrames and add blank columns
+        columns = []
+        for i in range(1, df_docs.shape[1] + 1):
+            columns.append(df_docs[f"Doc {i}"])
+            columns.append(pd.Series(np.nan, name=f"Expert Score {i}", index=df_docs.index))
+            columns.append(df_scores[f"BM25 Score {i}"])
+
+        # Concatenate along the columns axis
+        df_interleaved = pd.concat(columns, axis=1)
+
+        # Append to the original DataFrame and save
+        print('Outputting to csv...')
+        pd.concat([qcsv, df_interleaved], axis=1).to_csv('answers.csv', index=False)
 
 if __name__ == '__main__':
-    if len(sys.argv) < 2:
-        print(f"Usage: python3 {__file__} 'Message Here'", file=sys.stderr)
-        sys.exit(1)
-    main(sys.argv[1])
+    # Avoids potential deadlocks
+    os.environ['TOKENIZERS_PARALLELISM'] = 'false'
+
+    # If the user provided a query, then get the answers for that prompt
+    # Otherwise, read queries from csv
+    main(sys.argv[1] if len(sys.argv) >= 2 else None)
