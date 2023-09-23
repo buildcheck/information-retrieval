@@ -51,6 +51,42 @@ def get_version_hashes():
     )).stdout.strip()
     return data_hash, commit_hash
 
+def output_print(top_docs, top_scores):
+    results = [
+        f'Score: {top_scores[i]:.4f}\n' + top_docs[i]
+        for i in range(top_scores.shape[0])
+    ]
+    divider = '\n' + '=' * 40 + '\n'
+    print(f'\nBM25 Top {top_scores.shape[0]} results:')
+    print(divider + divider.join(results))
+    print()
+
+def output_csv(top_docs, top_scores, qcsv):
+    df_docs = pd.DataFrame(top_docs, columns=[
+        f"Doc {i}" for i in range(1, top_scores.shape[1] + 1)
+    ])
+    df_scores = pd.DataFrame(top_scores, columns=[
+        f"BM25 Score {i}" for i in range(1, top_scores.shape[1] + 1)
+    ])
+
+    # Interleave the two DataFrames and add blank columns
+    columns = []
+    for i in range(1, df_docs.shape[1] + 1):
+        columns.append(df_docs[f"Doc {i}"])
+        columns.append(pd.Series(
+            np.nan, name=f"Expert Score {i}", index=df_docs.index
+        ))
+        columns.append(df_scores[f"BM25 Score {i}"])
+
+    # Concatenate along the columns axis
+    df_interleaved = pd.concat(columns, axis=1)
+    print('Outputting to csv...')
+    outfile = Path('ir-answers.csv').open('w')
+    data_hash, commit_hash = get_version_hashes()
+    outfile.write(f'Data version: {data_hash},Code version: {commit_hash}\n')
+    pd.concat([qcsv, df_interleaved], axis=1).to_csv(outfile, index=False)
+    print('Success!')
+
 def main(query):
     '''
     If the user provided a query, then get the answers for it and print results
@@ -86,39 +122,9 @@ def main(query):
     top_scores = scores[np.arange(scores.shape[0])[:, None], top_idx]
 
     if query:
-        results = [
-            f'Score: {top_scores[0][i]:.4f}\n' + top_docs[0][i]
-            for i in range(top_scores.shape[1])
-        ]
-        divider = '\n' + '=' * 40 + '\n'
-        print(f'\nBM25 Top {top_N} results:')
-        print(divider + divider.join(results))
-        print()
+        output_print(top_docs[0], top_scores[0])
     else:
-        df_docs = pd.DataFrame(top_docs, columns=[
-            f"Doc {i}" for i in range(1, top_scores.shape[1] + 1)
-        ])
-        df_scores = pd.DataFrame(top_scores, columns=[
-            f"BM25 Score {i}" for i in range(1, top_scores.shape[1] + 1)
-        ])
-
-        # Interleave the two DataFrames and add blank columns
-        columns = []
-        for i in range(1, df_docs.shape[1] + 1):
-            columns.append(df_docs[f"Doc {i}"])
-            columns.append(pd.Series(
-                np.nan, name=f"Expert Score {i}", index=df_docs.index
-            ))
-            columns.append(df_scores[f"BM25 Score {i}"])
-
-        # Concatenate along the columns axis
-        df_interleaved = pd.concat(columns, axis=1)
-        print('Outputting to csv...')
-        outfile = Path('ir-answers.csv').open('w')
-        data_hash, commit_hash = get_version_hashes()
-        outfile.write(f'Data version: {data_hash},Code version: {commit_hash}\n')
-        pd.concat([qcsv, df_interleaved], axis=1).to_csv(outfile, index=False)
-        print('Success!')
+        output_csv(top_docs, top_scores, qcsv)
 
 if __name__ == '__main__':
     # Avoids potential deadlocks
