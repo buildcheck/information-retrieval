@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 from rank_bm25 import BM25Okapi
 import torch
+from torch.utils.data import TensorDataset, DataLoader
 from transformers import AutoModel, AutoTokenizer
 from tqdm import tqdm
 
@@ -57,12 +58,24 @@ def get_colbert_processed_corpus(model, tokenizer, max_sequence_length, tokenize
             for doc_word_pieces in tokenized_corpus
         ]}, return_tensors='pt')
         with torch.inference_mode():
-            matrices = timefunc(
-                'Preprocessing corpus with ColBERT to generate matrices... ',
-                partial(model, **tokenized_ids)
-            )['last_hidden_state']
+            batch_size = 100
+            loader = DataLoader(
+                TensorDataset(tokenized_ids['input_ids'][:300], tokenized_ids['attention_mask'][:300]),
+                batch_size=batch_size,
+                num_workers=1,
+                shuffle=False
+            )
+            matrices = torch.cat([
+                model(input_ids=inp, attention_mask=att)['last_hidden_state']
+                for inp, att in tqdm(
+                    loader, desc=(
+                        'Preprocessing corpus with ColBERT with batch size of '
+                        f'{batch_size} documents'
+                    )
+                )
+            ])
         timefunc(
-            'Saving ColBERT processed corpus as matrices... ',
+            'Saving ColBERT-processed corpus as matrices... ',
             partial(torch.save, matrices, save_file.open('wb'))
         )
     return matrices
