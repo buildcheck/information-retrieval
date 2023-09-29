@@ -41,7 +41,7 @@ def get_tokenized_corpus(tokenizer):
         pickle.dump(tokenized_corpus, save_file.open('wb'))
     return tokenized_corpus
 
-def get_colbert_processed_corpus(model, tokenizer, max_sequence_length, tokenized_corpus):
+def get_colbert_processed_corpus(model, tokenizer, max_sequence_length, tokenized_corpus, device):
     '''
     ColBERT represents every document as a matrix
     '''
@@ -49,7 +49,7 @@ def get_colbert_processed_corpus(model, tokenizer, max_sequence_length, tokenize
     if save_file.exists():
         matrices = timefunc(
             'Loading ColBERT processed corpus... ',
-            partial(torch.load, save_file.open('rb'))
+            partial(torch.load, save_file.open('rb'), map_location=device)
         )
     else:
         tokenized_ids = tokenizer.pad({"input_ids": [
@@ -60,13 +60,13 @@ def get_colbert_processed_corpus(model, tokenizer, max_sequence_length, tokenize
         with torch.inference_mode():
             batch_size = 100
             loader = DataLoader(
-                TensorDataset(tokenized_ids['input_ids'][:300], tokenized_ids['attention_mask'][:300]),
+                TensorDataset(tokenized_ids['input_ids'], tokenized_ids['attention_mask']),
                 batch_size=batch_size,
                 num_workers=1,
                 shuffle=False
             )
             matrices = torch.cat([
-                model(input_ids=inp, attention_mask=att)['last_hidden_state']
+                model(input_ids=inp.to(device), attention_mask=att.to(device))['last_hidden_state'].half()
                 for inp, att in tqdm(
                     loader, desc=(
                         'Preprocessing corpus with ColBERT with batch size of '
@@ -95,12 +95,18 @@ def get_scores(tokenized_queries, tokenized_corpus, tokenizer):
 
         model = AutoModel.from_pretrained(HF_MODEL_NAME)
         model.pooler = None
+        if torch.cuda.is_available():
+            device = 'cuda'
+            model = model.half()
+        else:
+            device = 'cpu'
+        model = model.to(device)
 
         # Truncate max sequence length to 128 because less than 4% of
         # docs are more than this, and truncation reduces compute.
         max_sequence_length = 128
         matrices = get_colbert_processed_corpus(
-            model, tokenizer, max_sequence_length, tokenized_corpus
+            model, tokenizer, max_sequence_length, tokenized_corpus, device
         )
 
         def scorer(tokenized_query):
@@ -113,17 +119,23 @@ def get_scores(tokenized_queries, tokenized_corpus, tokenizer):
             # efficient for normal computation. But it is not clear if matrix
             # multiply is "normal computation":
             # https://chat.openai.com/share/cc0af7dd-fe1f-40dd-a412-0933f5d1bfaf
+            p = tokenizer.pad({"input_ids": input_ids}, return_tensors='pt')
             q = model(
-                **tokenizer.pad({"input_ids": input_ids}, return_tensors='pt')
-            ).last_hidden_state.reshape(len(input_ids[0]), -1).T
-            return (matrices @ q).max(axis=1)[0].sum(axis=1).numpy()
+                p['input_ids'].to(device), p['attention_mask'].to(device)
+            ).last_hidden_state.half().reshape(len(input_ids[0]), -1).T
+
+            # Use MaxSim operation with vector dot product as similarity
+            # metric (c.f. Khattab et al "ColBERT: Efficient and Effective
+            # Passage Search via Contextualized Late Interaction over BERT"
+            # https://dl.acm.org/doi/abs/10.1145/3397271.3401075)
+            return (matrices @ q).max(axis=1)[0].sum(axis=1).cpu().numpy()
     else:
         raise ValueError(
             f'Command line option "{sys.argv[1]}" is not a valid argument'
         )
     return np.stack([
         scorer(tokenized_query) for tokenized_query in tqdm(
-            tokenized_queries, desc='Scoring query against corpus'
+            tokenized_queries, desc='Scoring queries against corpus'
         )
     ])
 
@@ -195,6 +207,7 @@ def main(query):
     top_N = 50
     top_idx = np.argsort(scores)[:, : -top_N - 1: -1]
 
+    top_scores = scores[np.arange(scores.shape[0])[:, None], top_idx]
     doc_filenames = sorted(DATA_DIR.glob('*.txt'))
     # We could generate this by using `tokenizer.decode` on the tokenized
     # corpus, but it doesn't reconstruct originals perfectly (e.g.
@@ -203,7 +216,6 @@ def main(query):
         f'Source file: {doc_filenames[i].name}\n'
         + (d := doc_filenames[i].open().read())[d.index('\n') + 1:] for i in r
     ] for r in top_idx]
-    top_scores = scores[np.arange(scores.shape[0])[:, None], top_idx]
 
     if query:
         output_print(top_docs[0], top_scores[0])
