@@ -66,6 +66,12 @@ def get_colbert_processed_corpus(model, tokenizer, max_sequence_length, tokenize
                 shuffle=False
             )
             matrices = torch.cat([
+                # CPU can convert full precision (i.e. float32) into half
+                # precision (i.e. float16), but it can't compute on it (e.g.
+                # you cannot muliply two float16 together on CPU). We always
+                # save as float16 because this allows us to cut the tensor size
+                # in half on disk. If we are operating with CPU instead of GPU,
+                # we can always convert back to float32 to do computations.
                 model(input_ids=inp.to(device), attention_mask=att.to(device))['last_hidden_state'].half()
                 for inp, att in tqdm(
                     loader, desc=(
@@ -95,19 +101,23 @@ def get_scores(tokenized_queries, tokenized_corpus, tokenizer):
 
         model = AutoModel.from_pretrained(HF_MODEL_NAME)
         model.pooler = None
-        if torch.cuda.is_available():
-            device = 'cuda'
-            model = model.half()
-        else:
-            device = 'cpu'
-        model = model.to(device)
-
         # Truncate max sequence length to 128 because less than 4% of
         # docs are more than this, and truncation reduces compute.
         max_sequence_length = 128
-        matrices = get_colbert_processed_corpus(
-            model, tokenizer, max_sequence_length, tokenized_corpus, device
-        )
+
+        if torch.cuda.is_available():
+            model = model.half()
+            device = 'cuda'
+            model = model.to(device)
+            matrices = get_colbert_processed_corpus(
+                model, tokenizer, max_sequence_length, tokenized_corpus, device
+            )
+        else:
+            device = 'cpu'
+            model = model.to(device)
+            matrices = get_colbert_processed_corpus(
+                model, tokenizer, max_sequence_length, tokenized_corpus, device
+            ).to(torch.float32)  # cpu can't use half precision
 
         def scorer(tokenized_query):
             input_ids = [tokenizer.convert_tokens_to_ids(tokenized_query)[:max_sequence_length]]
@@ -122,7 +132,7 @@ def get_scores(tokenized_queries, tokenized_corpus, tokenizer):
             p = tokenizer.pad({"input_ids": input_ids}, return_tensors='pt')
             q = model(
                 p['input_ids'].to(device), p['attention_mask'].to(device)
-            ).last_hidden_state.half().reshape(len(input_ids[0]), -1).T
+            ).last_hidden_state.reshape(len(input_ids[0]), -1).T
 
             # Use MaxSim operation with vector dot product as similarity
             # metric (c.f. Khattab et al "ColBERT: Efficient and Effective
