@@ -1,25 +1,12 @@
-name: buildcheck-search
+name: bc-ir
 channels:
-- pytorch
-- nvidia
 - conda-forge
 - defaults
 dependencies:
 - python=3.8
-- scipy
-- scikit-learn
-- matplotlib
-- tqdm
+- transformers
 - pytorch
 - pandas
-- transformers
-- torchvision
-- torchaudio
-- tensorboardx
-- tensorboard
-- pillow
 - pip
 - pip:
-    - torch-summary
-    - torchnet
     - rank_bm25
