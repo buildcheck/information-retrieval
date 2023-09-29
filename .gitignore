@@ -303,4 +303,6 @@ $RECYCLE.BIN/
 # Project-specific files to ignore
 fragments
 *.pickle
-ir-answers.csv
+ir-answers*.csv
+*.pt
+*.png
